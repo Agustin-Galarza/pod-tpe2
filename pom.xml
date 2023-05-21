@@ -19,6 +19,7 @@
     <mockito.version>4.11.0</mockito.version>
     <junit5.version>5.9.1</junit5.version>
     <hazelcast.version>3.8.6</hazelcast.version>
+    <dotenv.version>5.2.2</dotenv.version>
   </properties>
   <dependencyManagement>
     <dependencies>
@@ -46,6 +47,11 @@
         <version>${junit5.version}</version>
         <type>pom</type>
         <scope>import</scope>
+      </dependency>
+      <dependency>
+        <groupId>io.github.cdimascio</groupId>
+        <artifactId>java-dotenv</artifactId>
+        <version>${dotenv.version}</version>
       </dependency>
     </dependencies>
   </dependencyManagement>
