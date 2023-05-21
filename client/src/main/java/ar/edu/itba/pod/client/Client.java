@@ -1,17 +1,13 @@
-package org.example.client;
+package ar.edu.itba.pod.client;
 
 import com.hazelcast.client.HazelcastClient;
 import com.hazelcast.client.config.ClientConfig;
 import com.hazelcast.client.config.ClientNetworkConfig;
 import com.hazelcast.config.GroupConfig;
-import com.hazelcast.core.Hazelcast;
 import com.hazelcast.core.HazelcastInstance;
 import io.github.cdimascio.dotenv.Dotenv;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-
-import java.util.Map;
-import java.util.concurrent.TimeUnit;
 
 public class Client implements AutoCloseable{
     private static final Logger logger = LoggerFactory.getLogger(Client.class);
@@ -23,7 +19,12 @@ public class Client implements AutoCloseable{
 
     public void startClient(){
         logger.info("Starting client ...");
-        hazelcastInstance = HazelcastClient.newHazelcastClient(configClient());
+        try{
+            hazelcastInstance = HazelcastClient.newHazelcastClient(configClient());
+        }catch (IllegalStateException e){
+            logger.error(e.getMessage());
+            System.exit(1);
+        }
     }
     public ClientConfig configClient(){
         final Dotenv dotenv = Dotenv.load();
@@ -48,7 +49,6 @@ public class Client implements AutoCloseable{
 
 
     public static void main(String[] args) {
-
         try (final Client client = new Client()) {
             client.startClient();
         }

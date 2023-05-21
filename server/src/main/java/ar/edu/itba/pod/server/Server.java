@@ -1,4 +1,4 @@
-package org.example.server;
+package ar.edu.itba.pod.server;
 
 import com.hazelcast.config.Config;
 import com.hazelcast.config.GroupConfig;
@@ -9,7 +9,6 @@ import io.github.cdimascio.dotenv.Dotenv;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.io.IOException;
 import java.util.Optional;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
@@ -43,7 +42,12 @@ public class Server {
     }
     public void startServer(){
         logger.info(" Server Starting ...");
-        hazelcastInstance = Hazelcast.newHazelcastInstance(configServer());
+        try{
+            hazelcastInstance = Hazelcast.newHazelcastInstance(configServer());
+        }catch (Exception e){
+            logger.error(e.getMessage());
+            System.exit(1);
+        }
     }
     public void awaitTermination(int maxMinutes){
         try {
