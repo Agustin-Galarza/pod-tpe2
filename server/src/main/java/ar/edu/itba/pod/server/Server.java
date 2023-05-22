@@ -24,8 +24,8 @@ public class Server {
     private static final String GROUP_PASSWORD_DEFAULT = "password";
 
     private Config configServer(){
-        final Dotenv dotenv = Dotenv.load();
-        final Config config = new Config();
+        Dotenv dotenv = Dotenv.load();
+        Config config = new Config();
 //        config.setProperty( "hazelcast.logging.type", "log4j" );
 
         // Group Config
@@ -78,7 +78,7 @@ public class Server {
         Runtime.getRuntime().addShutdownHook(new Thread(server::shutdown));
     }
 
-    private static <T> Optional<T> getProperty(final String name, final Class<T> type){
+    private static <T> Optional<T> getProperty(String name, Class<T> type){
         String rawProperty = System.getProperty(name);
         if( rawProperty == null ) return Optional.empty();
         try{
