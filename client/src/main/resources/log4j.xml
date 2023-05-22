@@ -9,9 +9,19 @@
 		</layout>
 	</appender>
 
+	<appender name="performance" class="org.apache.log4j.ConsoleAppender">
+		<layout class="org.apache.log4j.PatternLayout">
+			<param name="ConversionPattern" value="%d{yyyy-MM-dd   HH:mm:ss}   %-5p [%t] line %L - %m%n" />
+		</layout>
+	</appender>
+
 	<root>
 		<level value="INFO" />
 		<appender-ref ref="console" />
 	</root>
+	<logger name="performance" additivity="false">
+		<level value="INFO"/>
+		<appender-ref ref="performance"/>
+	</logger>
 
 </log4j:configuration>
