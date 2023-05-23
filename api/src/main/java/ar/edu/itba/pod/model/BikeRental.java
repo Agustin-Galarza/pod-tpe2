@@ -1,5 +1,6 @@
 package ar.edu.itba.pod.model;
 
+import java.io.Serializable;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.Objects;
@@ -9,7 +10,8 @@ public record BikeRental(
         LocalDateTime startDate,
         int endStationId,
         LocalDateTime endDate,
-        boolean isMember) {
+        boolean isMember)
+implements Serializable {
     @Override
     public String toString(){
         var dateTimeFormatter = DateTimeFormatter.ofPattern("dd/MM/yyyy HH:mm:ss");

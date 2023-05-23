@@ -9,7 +9,9 @@ import com.hazelcast.client.config.ClientConfig;
 import com.hazelcast.client.config.ClientNetworkConfig;
 import com.hazelcast.config.GroupConfig;
 import com.hazelcast.core.HazelcastInstance;
+import com.hazelcast.mapreduce.KeyValueSource;
 import io.github.cdimascio.dotenv.Dotenv;
+import org.jetbrains.annotations.NotNull;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -27,16 +29,44 @@ public class Client implements AutoCloseable{
     private static final Logger performanceLogger = LoggerFactory.getLogger("performance");
 
     private HazelcastInstance hazelcastInstance;
+    private final QuerySolver solver;
+    private String inPath;
+    private String outPath;
+
     private static final String GROUP_NAME_ENV = "GROUP_NAME";
     private static final String GROUP_NAME_DEFAULT = "name";
     private static final String GROUP_PASSWORD_ENV = "GROUP_PASSWORD";
     private static final String GROUP_PASSWORD_DEFAULT = "password";
 
-    public void startClient(){
-        logger.info("Starting client ...");
-        hazelcastInstance = HazelcastClient.newHazelcastClient(configClient());
+    private static final String ADDRESSES_PROPERTY_NAME = "addresses";
+    private static final String INPATH_PROPERTY_NAME = "inPath";
+    private static final String OUTPATH_PROPERTY_NAME = "outPath";
+
+    private static final String STATIONS_MAP_NAME = "stations";
+    private static final String RENTALS_MAP_NAME = "rentals";
+    private static final String STATIONS_CSV_FILENAME = "stations.csv";
+    private static final String RENTALS_CSV_FILENAME = "bikes.csv";
+
+    private static final Map<String, Class<? extends QuerySolver>> solvers = new HashMap<>(){{
+       put("query1", Query1Solver.class);
+    }};
+
+    public Client(@NotNull QuerySolver solver){
+        this.solver = solver;
     }
-    public ClientConfig configClient(){
+
+    public void startClient(@NotNull String[] nodeAddresses,@NotNull String inPath,@NotNull String outPath) throws IOException{
+        logger.info("Starting client ...");
+        hazelcastInstance = HazelcastClient.newHazelcastClient(configClient(nodeAddresses));
+        this.inPath = inPath;
+        this.outPath = outPath;
+
+        performanceLogger.info("Inicio de la lectura de los archivos.");
+        uploadRentals();
+        readStations();
+        performanceLogger.info("Fin de la lectura de los archivos.");
+    }
+    public ClientConfig configClient(String[] nodeAddresses){
         Dotenv dotenv = Dotenv.load();
         ClientConfig config = new ClientConfig();
 
@@ -47,7 +77,9 @@ public class Client implements AutoCloseable{
         config.setGroupConfig(groupConfig);
         // Client Network Config
         ClientNetworkConfig clientNetworkConfig = new ClientNetworkConfig();
-        // TODO: configure network setup and discovery
+
+        clientNetworkConfig.addAddress(nodeAddresses);
+
         config.setNetworkConfig(clientNetworkConfig);
 
         return config;
@@ -57,7 +89,7 @@ public class Client implements AutoCloseable{
         hazelcastInstance.shutdown();
     }
 
-    public void readRentals() throws IOException{
+    public void uploadRentals() throws IOException{
         /*
          * ○ start_date: Fecha y hora del alquiler de la bicicleta (inicio del viaje) en formato
          * yyyy-MM-dd HH:mm:ss
@@ -68,7 +100,7 @@ public class Client implements AutoCloseable{
          * ○ is_member: Si el usuario del alquiler es miembro del sistema de alquiler (0 si no es
          * miembro, 1 si lo es)
          */
-        ConcurrentMap<String, BikeRental> rentalsMap = getMap("rentals");
+        ConcurrentMap<String, BikeRental> rentalsMap = getRentalsMap();
         final String DATE_TIME_PATTERN = "yyyy-MM-dd HH:mm:ss";
 
         var reader = new CSVReader<BikeRental>(
@@ -96,6 +128,7 @@ public class Client implements AutoCloseable{
                     }
             );
         } catch (IOException e) {
+            //FIXME: throwing and logging exceptions twice
             logger.error("Could not read from stations file: ", e);
             throw e;
         }
@@ -109,7 +142,7 @@ public class Client implements AutoCloseable{
          * ○ latitude: Latitud de la ubicación de la estación (número real)
          * ○ longitude: Longitud de la ubicación de la estación (número real)
          */
-        ConcurrentMap<String, Station> stationsMap = getMap("stations");
+        ConcurrentMap<String, Station> stationsMap = getStationsMap();
 
         CSVReader<Station> reader = new CSVReader<>(
                 "./stations.csv",
@@ -136,9 +169,17 @@ public class Client implements AutoCloseable{
             throw e;
         }
     }
+    @SuppressWarnings({"deprecated", "deprecation"})
+    public void solveQuery(){
+        solver.solveQuery(hazelcastInstance.getJobTracker("query-tracker"), KeyValueSource.fromMap(hazelcastInstance.getMap(RENTALS_MAP_NAME)), STATIONS_MAP_NAME);
+    }
 
-    public <T> ConcurrentMap<String, T> getMap(String name){
-        return hazelcastInstance.getMap(name);
+    public ConcurrentMap<String, Station> getStationsMap(){
+        return hazelcastInstance.getMap(STATIONS_MAP_NAME);
+    }
+
+    public ConcurrentMap<String, BikeRental> getRentalsMap(){
+        return hazelcastInstance.getMap(RENTALS_MAP_NAME);
     }
 
     //TODO: remove
@@ -150,30 +191,69 @@ public class Client implements AutoCloseable{
         return Duration.between(start, end).dividedBy(NANOS_IN_MILI).getNano();
     }
 
+    private static void exitWithError(String infoMsg, String errorMsg, Throwable ex){
+        logger.error(errorMsg, ex);
+        logger.info(infoMsg);
+        System.exit(1);
+    }
+
     public static void main(String[] args) {
-        try (Client client = new Client()) {
-            client.startClient();
+        String addressesRawList = getProperty(ADDRESSES_PROPERTY_NAME, String.class).orElseThrow(() -> new IllegalArgumentException("No addresses chosen for connection to cluster"));
+        String[] addressesList = addressesRawList.split(",");
+        String inPath = getProperty(INPATH_PROPERTY_NAME, String.class).orElseGet(() -> ".");
+        String outPath = getProperty(OUTPATH_PROPERTY_NAME, String.class).orElseGet(() -> ".");
+        String query = args[0];
 
-            performanceLogger.info("Inicio de la lectura de los archivos.");
-            client.readStations();
-            performanceLogger.info("Fin de la lectura de los archivos.");
+        QuerySolver querySolver = null;
+        try {
+            querySolver = solvers.get(query).getDeclaredConstructor().newInstance();
+        }catch (NullPointerException | NoSuchMethodException e){
+            exitWithError("Error: no solver for " + query, "Class not found for entry " + query, e);
+        } catch (Exception e){
+            exitWithError("Unexpected error, aborting.", "Unexpected exception:", e);
+        }
+        assert querySolver != null;
 
-            var stations = client.getMap("stations");
+        try (Client client = new Client(querySolver)) {
+            client.startClient(addressesList, inPath, outPath);
 
-            System.out.println(stations.get("de Gaspé / Dante"));
+            client.solveQuery();
 
         }catch (IllegalStateException e){
-            logger.error(e.getMessage());
-            System.exit(1);
+            exitWithError("Error: could not connect to server. Stopping.", "Could not connect to server:", e);
         }
         catch (IOException e){
-            logger.info("Could not read file. Stopping.");
-            System.exit(1);
+            exitWithError("Error: could not read file. Stopping.", "Error reading file:", e);
+        }catch (Exception e){
+            exitWithError("Unexpected error, aborting.", "Unexpected exception:", e);
         }
     }
 
     @Override
     public void close() {
         shutdown();
+    }
+
+    private static <T> Optional<T> getProperty(String name, Class<T> type){
+        String rawProperty = System.getProperty(name);
+        if( rawProperty == null ) return Optional.empty();
+        try{
+            T property;
+            if (type == Integer.class) {
+                property = type.cast(Integer.parseInt(rawProperty));
+            } else if (type == Boolean.class) {
+                property = type.cast(Boolean.parseBoolean(rawProperty));
+            } else if (type == Double.class) {
+                property = type.cast(Double.parseDouble(rawProperty));
+            } else if (type == Float.class) {
+                property = type.cast(Float.parseFloat(rawProperty));
+            } else {
+                property = type.cast(rawProperty);
+            }
+            return Optional.of(property);
+        } catch (Exception e){
+            logger.error("Could not cast property " + name + " as " + rawProperty + " to " + type.getName());
+        }
+        return Optional.empty();
     }
 }
