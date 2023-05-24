@@ -4,6 +4,8 @@ import ar.edu.itba.pod.client.utils.CSVReader;
 import ar.edu.itba.pod.model.BikeRental;
 import ar.edu.itba.pod.model.Coordinate;
 import ar.edu.itba.pod.model.Station;
+import ar.edu.itba.pod.utils.FnResult;
+import ar.edu.itba.pod.utils.SystemUtils;
 import com.hazelcast.client.HazelcastClient;
 import com.hazelcast.client.config.ClientConfig;
 import com.hazelcast.client.config.ClientNetworkConfig;
@@ -16,8 +18,6 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
-import java.time.Duration;
-import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
@@ -55,15 +55,17 @@ public class Client implements AutoCloseable{
         this.solver = solver;
     }
 
-    public void startClient(@NotNull String[] nodeAddresses,@NotNull String inPath,@NotNull String outPath) throws IOException{
+    public void startClient(@NotNull String[] nodeAddresses,@NotNull String inPath,@NotNull String outPath) {
         logger.info("Starting client ...");
         hazelcastInstance = HazelcastClient.newHazelcastClient(configClient(nodeAddresses));
         this.inPath = inPath;
         this.outPath = outPath;
 
         performanceLogger.info("Inicio de la lectura de los archivos.");
-        uploadRentals();
-        readStations();
+        if(!uploadRentals().and(readStations()).isOk()){
+            logger.info("Error: could not read input csv. Aborting");
+            System.exit(1);
+        }
         performanceLogger.info("Fin de la lectura de los archivos.");
     }
     public ClientConfig configClient(String[] nodeAddresses){
@@ -86,10 +88,14 @@ public class Client implements AutoCloseable{
     }
     public void shutdown(){
         logger.info("Shutting down client ...");
+        // Destroy maps before closing to clear up the memory
+        hazelcastInstance.getMap(RENTALS_MAP_NAME).destroy();
+        hazelcastInstance.getMap(STATIONS_MAP_NAME).destroy();
+
         hazelcastInstance.shutdown();
     }
 
-    public void uploadRentals() throws IOException{
+    public FnResult uploadRentals() {
         /*
          * ○ start_date: Fecha y hora del alquiler de la bicicleta (inicio del viaje) en formato
          * yyyy-MM-dd HH:mm:ss
@@ -102,9 +108,10 @@ public class Client implements AutoCloseable{
          */
         ConcurrentMap<String, BikeRental> rentalsMap = getRentalsMap();
         final String DATE_TIME_PATTERN = "yyyy-MM-dd HH:mm:ss";
+        final String path = String.join("/", inPath, RENTALS_CSV_FILENAME);
 
         var reader = new CSVReader<BikeRental>(
-                "./bikes.csv",
+                path,
                 Arrays.asList(
                         new CSVReader.CSVColumn<>("start_date", rawDate -> LocalDateTime.parse(rawDate, DateTimeFormatter.ofPattern(DATE_TIME_PATTERN))),
                         new CSVReader.CSVColumn<>("emplacement_pk_start", Integer::parseInt),
@@ -128,14 +135,14 @@ public class Client implements AutoCloseable{
                     }
             );
         } catch (IOException e) {
-            //FIXME: throwing and logging exceptions twice
             logger.error("Could not read from stations file: ", e);
-            throw e;
+            logger.info("Could not read from stations file.");
+            return FnResult.ERROR;
         }
-
+        return FnResult.OK;
     }
 
-    public void readStations() throws IOException{
+    public FnResult readStations() {
         /*
          * ○ pk: Identificador de la estación (número entero)
          * ○ name: Nombre de la estación (cadena de caracteres)
@@ -143,9 +150,10 @@ public class Client implements AutoCloseable{
          * ○ longitude: Longitud de la ubicación de la estación (número real)
          */
         ConcurrentMap<String, Station> stationsMap = getStationsMap();
+        final String path = String.join("/", inPath, STATIONS_CSV_FILENAME);
 
         CSVReader<Station> reader = new CSVReader<>(
-                "./stations.csv",
+                path,
                 Arrays.asList(
                         new CSVReader.CSVColumn<>("pk", Integer::parseInt),
                         new CSVReader.CSVColumn<>("name", s -> s),
@@ -166,12 +174,17 @@ public class Client implements AutoCloseable{
             );
         } catch (IOException e) {
             logger.error("Could not read from stations file: ", e);
-            throw e;
+            logger.info("Could not read from stations file");
+            return FnResult.ERROR;
         }
+        return FnResult.OK;
     }
+
     @SuppressWarnings({"deprecated", "deprecation"})
     public void solveQuery(){
-        solver.solveQuery(hazelcastInstance.getJobTracker("query-tracker"), KeyValueSource.fromMap(hazelcastInstance.getMap(RENTALS_MAP_NAME)), STATIONS_MAP_NAME);
+//        solver.solveQuery(hazelcastInstance.getJobTracker("query-tracker"), KeyValueSource.fromMap(hazelcastInstance.getMap(RENTALS_MAP_NAME)), STATIONS_MAP_NAME);
+        logger.info(Integer.toString(getRentalsMap().size()));
+        logger.info(Integer.toString(getStationsMap().size()));
     }
 
     public ConcurrentMap<String, Station> getStationsMap(){
@@ -182,15 +195,6 @@ public class Client implements AutoCloseable{
         return hazelcastInstance.getMap(RENTALS_MAP_NAME);
     }
 
-    //TODO: remove
-    public static long elapsedMilisOf(Runnable task){
-        final long NANOS_IN_MILI = 1_000_000;
-        var start = Instant.now();
-        task.run();
-        var end = Instant.now();
-        return Duration.between(start, end).dividedBy(NANOS_IN_MILI).getNano();
-    }
-
     private static void exitWithError(String infoMsg, String errorMsg, Throwable ex){
         logger.error(errorMsg, ex);
         logger.info(infoMsg);
@@ -198,11 +202,15 @@ public class Client implements AutoCloseable{
     }
 
     public static void main(String[] args) {
-        String addressesRawList = getProperty(ADDRESSES_PROPERTY_NAME, String.class).orElseThrow(() -> new IllegalArgumentException("No addresses chosen for connection to cluster"));
+        String addressesRawList = SystemUtils.getProperty(ADDRESSES_PROPERTY_NAME, String.class).orElseThrow(() -> new IllegalArgumentException("No addresses chosen for connection to cluster"));
         String[] addressesList = addressesRawList.split(",");
-        String inPath = getProperty(INPATH_PROPERTY_NAME, String.class).orElseGet(() -> ".");
-        String outPath = getProperty(OUTPATH_PROPERTY_NAME, String.class).orElseGet(() -> ".");
+        String inPath = SystemUtils.getProperty(INPATH_PROPERTY_NAME, String.class).orElseGet(() -> ".");
+        String outPath = SystemUtils.getProperty(OUTPATH_PROPERTY_NAME, String.class).orElseGet(() -> ".");
+        if(args.length != 1){
+            exitWithError("Error: missing query param.", "No query solver name given", new IllegalArgumentException());
+        }
         String query = args[0];
+
 
         QuerySolver querySolver = null;
         try {
@@ -219,12 +227,9 @@ public class Client implements AutoCloseable{
 
             client.solveQuery();
 
-        }catch (IllegalStateException e){
+        } catch (IllegalStateException e){
             exitWithError("Error: could not connect to server. Stopping.", "Could not connect to server:", e);
-        }
-        catch (IOException e){
-            exitWithError("Error: could not read file. Stopping.", "Error reading file:", e);
-        }catch (Exception e){
+        } catch (Exception e){
             exitWithError("Unexpected error, aborting.", "Unexpected exception:", e);
         }
     }
@@ -234,26 +239,4 @@ public class Client implements AutoCloseable{
         shutdown();
     }
 
-    private static <T> Optional<T> getProperty(String name, Class<T> type){
-        String rawProperty = System.getProperty(name);
-        if( rawProperty == null ) return Optional.empty();
-        try{
-            T property;
-            if (type == Integer.class) {
-                property = type.cast(Integer.parseInt(rawProperty));
-            } else if (type == Boolean.class) {
-                property = type.cast(Boolean.parseBoolean(rawProperty));
-            } else if (type == Double.class) {
-                property = type.cast(Double.parseDouble(rawProperty));
-            } else if (type == Float.class) {
-                property = type.cast(Float.parseFloat(rawProperty));
-            } else {
-                property = type.cast(rawProperty);
-            }
-            return Optional.of(property);
-        } catch (Exception e){
-            logger.error("Could not cast property " + name + " as " + rawProperty + " to " + type.getName());
-        }
-        return Optional.empty();
-    }
 }
