@@ -26,7 +26,7 @@ public class Server {
     private Config configServer(){
         Dotenv dotenv = Dotenv.load();
         Config config = new Config();
-//        config.setProperty( "hazelcast.logging.type", "log4j" );
+        config.setProperty( "hazelcast.logging.type", "slf4j" );
 
         // Group Config
         GroupConfig groupConfig = new GroupConfig()

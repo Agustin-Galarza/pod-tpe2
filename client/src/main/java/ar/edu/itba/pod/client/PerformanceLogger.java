@@ -1,16 +1,28 @@
 package ar.edu.itba.pod.client;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import ar.edu.itba.pod.client.exceptions.FileOpeningException;
 
+import java.io.FileWriter;
+import java.io.IOException;
+import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Instant;
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
 
 public class PerformanceLogger {
-    private static final Logger logger = LoggerFactory.getLogger("performance");
-    private static final String DATE_FMT = " dd/MM/yyyy HH:mm:ss:xxxx";
+    private static final String DATE_FMT = "dd/MM/YYYY  HH:mm:ss:SSS";
+    private static final String LOGGER_NAME = "PERFORMANCE";
+    private static final DateTimeFormatter dateFormatter = DateTimeFormatter.ofPattern(DATE_FMT);
 
+    private static String buildLine(String message){
+        String dateString = dateFormatter.format(LocalDateTime.now());
+        String thread = Thread.currentThread().getName();
+        // [date] [name] [thread]: [message]
+        return String.format("%s %s [%s]: %s\n", dateString, LOGGER_NAME, thread, message);
+    }
     public static PerformanceLogger logTo(String targetDir, String filename){
-        return new PerformanceLogger(Path.of(String.join("/", targetDir, filename)));
+        return new PerformanceLogger(Path.of(String.join("/", targetDir, filename)), true);
     }
 
     private enum Messages{
@@ -29,13 +41,31 @@ public class PerformanceLogger {
     }
 
     private final Path path;
+    private boolean writeToConsole;
 
-    private PerformanceLogger(Path path){
+    private PerformanceLogger(Path path, boolean writeToConsole){
         this.path = path;
+        this.writeToConsole = writeToConsole;
+        if(!Files.exists(path)){
+            try{
+                Files.createFile(path);
+            } catch (IOException e){
+                throw new RuntimeException(e);
+            }
+        }
+
     }
 
     private void log(Messages message){
-        logger.info(message.toString());
+        var line = buildLine(message.msg);
+        try (var writer = new FileWriter(this.path.toFile(), true)){
+            writer.append(line);
+        } catch (IOException e){
+            throw new FileOpeningException(path.toString());
+        }
+        if(writeToConsole){
+            System.out.print(line);
+        }
     }
 
     public void logReadStart(){

@@ -1,5 +1,7 @@
 package ar.edu.itba.pod.client.utils;
 
+import ar.edu.itba.pod.client.exceptions.FileOpeningException;
+
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.InvalidPathException;
@@ -24,17 +26,33 @@ public class CSVReader<T> {
         this.columns.addAll(columns);
     }
 
-    public void processItems(Consumer<Map<String, Object>> processor) throws IOException {
+    /**
+     * Reads the csv file and processes each row with the given procedure.
+     * @param processor a function that consumes the values of a row.
+     *                      The consumer receives a map with all the values from a row,
+     *                      where the column name is the key to its corresponding value.
+     * @throws FileOpeningException if there are problems while trying to open the csv file.
+     */
+    public void processItems(Consumer<Map<String, Object>> processor)  {
         try (Stream<String> lines = Files.lines(path)) {
             lines.skip(1).parallel().forEach(line -> processor.accept(extractValues(line)));
+        }catch (IOException e){
+            throw new FileOpeningException(path.toString());
         }
     }
 
+    /**
+     * Reads the csv file and returns a collection with all the elements extracted from it.
+     * @param itemGenerator a function to create an item from the values of a row.
+     *                      The function receives a map with all the values from a row,
+     *                      where the column name is the key to its corresponding value.
+     * @throws FileOpeningException if there are problems while trying to open the csv file.
+     */
     public Collection<T> getItems(Function<Map<String, Object>, T> itemGenerator) {
         try (Stream<String> lines = Files.lines(path)) {
             return lines.skip(1).parallel().map(line -> itemGenerator.apply(extractValues(line))).toList();
         } catch (IOException e) {
-            return null;
+            throw new FileOpeningException(path.toString());
         }
     }
 

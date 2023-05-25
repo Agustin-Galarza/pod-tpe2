@@ -1,10 +1,12 @@
 package ar.edu.itba.pod.client.querySolvers;
 
+import ar.edu.itba.pod.aggregation.collators.Query1Collator;
 import ar.edu.itba.pod.aggregation.mappers.MemberTripCounterMapper;
 import ar.edu.itba.pod.aggregation.reducers.MemberTripCounterReducerFactory;
+import ar.edu.itba.pod.client.exceptions.FileWriteException;
+import ar.edu.itba.pod.client.exceptions.MapReduceExecutionException;
 import ar.edu.itba.pod.model.BikeRental;
 import ar.edu.itba.pod.model.Station;
-import ar.edu.itba.pod.utils.FnResult;
 import com.hazelcast.core.HazelcastInstance;
 import com.hazelcast.core.IMap;
 import com.hazelcast.mapreduce.JobCompletableFuture;
@@ -15,80 +17,63 @@ import org.slf4j.LoggerFactory;
 import java.io.BufferedWriter;
 import java.io.FileWriter;
 import java.io.IOException;
-import java.nio.file.Files;
-import java.nio.file.Path;
 import java.util.*;
 import java.util.concurrent.ExecutionException;
 import java.util.function.Function;
-import java.util.function.ToIntFunction;
 
 public class Query1Solver implements QuerySolver {
     private static final Logger logger = LoggerFactory.getLogger(Query1Solver.class);
-
-    public String getName(){
-        return "query1";
+    private final String name;
+    public Query1Solver(String name){
+        this.name = name;
     }
+
     @Override
     @SuppressWarnings("deprecation")
-    public FnResult solveQuery(
+    public void solveQuery(
             HazelcastInstance hazelcastInstance,
-            KeyValueSource<Integer, BikeRental> rentalsSource,
-            String stationsMapName,
+            Function<HazelcastInstance, IMap<Integer,BikeRental>> getRentalsMap,
+            Function<HazelcastInstance, IMap<Integer, Station>> getStationsMap,
             String filePath
     ){
-        FnResult result = FnResult.OK;
+        //TODO: change this thing to an abstract class
+        var stationsMap = getStationsMap.apply(hazelcastInstance);
+        var rentalsMap = getRentalsMap.apply(hazelcastInstance);
 
-        JobCompletableFuture<Map<Integer,Integer>> jobFuture = hazelcastInstance.getJobTracker(getName())
-                .newJob(rentalsSource)
+        JobCompletableFuture<List<Map.Entry<String,Integer>>> jobFuture = hazelcastInstance.getJobTracker(name)
+                .newJob(KeyValueSource.fromMap(rentalsMap))
                 .mapper(new MemberTripCounterMapper())
                 .reducer(new MemberTripCounterReducerFactory())
-                .submit();
+                .submit(new Query1Collator(hazelcastInstance, stationsMap.getName()));
 
         // Sort values and write to file
         try {
-            final IMap<Integer, Station> stationsMap = hazelcastInstance.getMap(stationsMapName);
-            final Function<Integer, String> stationNameMapper = id -> stationsMap.get(id).name();
+            List<Map.Entry<String,Integer>> computedValues = jobFuture.get();
 
-            final ToIntFunction<Map.Entry<String,Integer>> tripsAmount = Map.Entry::getValue;
-            final Function<Map.Entry<String,Integer>, String> alphabetical = Map.Entry::getKey;
-            Set<Map.Entry<Integer,Integer>> computedValues = jobFuture.get().entrySet();
-            // ordenar los valores, primero por cant de viajes luego alfabético por nombre de estación
-            var processedValues = computedValues.stream()
-                    .parallel()
-                    .filter(entry -> stationsMap.containsKey(entry.getKey()))
-                    .map(entry -> Map.entry(stationNameMapper.apply(entry.getKey()), entry.getValue()))
-                    .sorted(Comparator.comparingInt(tripsAmount).thenComparing(alphabetical))
-                    .toList();
-
-            writeValues(filePath, processedValues);
-
-            //TODO: find out where to sort the values
-
+            writeValues(filePath, computedValues);
         } catch (InterruptedException e) {
-            logger.error("MapReduce computation was interrupted: ", e);
-            result = FnResult.ERROR;
+            throw new MapReduceExecutionException("Job was interrupted (" + e.getCause() + ")");
         } catch (ExecutionException e) {
-            logger.error("MapReduce computation failed: ", e);
-            result = FnResult.ERROR;
-        } catch (IOException e) {
-            logger.error("Error while writing to file: ", e);
-            result = FnResult.ERROR;
-        } catch (Exception e){
-            logger.error("Unexpected exception: ", e);
-            result = FnResult.ERROR;
+            throw new MapReduceExecutionException("MapReduce computation was aborted (" + e.getCause() + ")");
         }
-        return result;
     }
 
-    public void writeValues(String filePath, List<Map.Entry<String, Integer>> values) throws IOException{
+    @Override
+    public String getName() {
+        return name;
+    }
+
+    public void writeValues(String filePath, Collection<Map.Entry<String, Integer>> values) {
         final String header = "station;started_trips\n";
-        final String path = String.join("/", filePath, getName() + ".csv");
+        final String path = String.join("/", filePath, name + ".csv");
 
         try(BufferedWriter writer = new BufferedWriter(new FileWriter(path))){
             writer.append(header);
             for(Map.Entry<String, Integer> entry : values){
                 writer.append(entry.getKey()).append(';').append(Integer.toString(entry.getValue())).append('\n');
             }
+        } catch (IOException e){
+            throw new FileWriteException(path);
         }
     }
 

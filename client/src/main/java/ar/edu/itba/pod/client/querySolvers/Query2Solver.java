@@ -1,13 +1,17 @@
 package ar.edu.itba.pod.client.querySolvers;
 
+import ar.edu.itba.pod.aggregation.collators.Query2Collator;
+import ar.edu.itba.pod.aggregation.combiners.FastestTripCombinerFactory;
 import ar.edu.itba.pod.aggregation.mappers.FastestTripMapper;
 import ar.edu.itba.pod.aggregation.reducers.FastestTripReducerFactory;
+import ar.edu.itba.pod.client.exceptions.FileWriteException;
+import ar.edu.itba.pod.client.exceptions.MapReduceExecutionException;
 import ar.edu.itba.pod.model.BikeRental;
 import ar.edu.itba.pod.model.Station;
 import ar.edu.itba.pod.utils.Computations;
-import ar.edu.itba.pod.utils.FnResult;
 import ar.edu.itba.pod.utils.Pair;
 import com.hazelcast.core.HazelcastInstance;
+import com.hazelcast.core.ICompletableFuture;
 import com.hazelcast.core.IMap;
 import com.hazelcast.mapreduce.KeyValueSource;
 import org.slf4j.Logger;
@@ -25,8 +29,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ExecutionException;
 import java.util.function.Function;
-import java.util.function.Predicate;
-import java.util.function.ToDoubleFunction;
 
 public class Query2Solver implements QuerySolver{
     
@@ -34,99 +36,61 @@ public class Query2Solver implements QuerySolver{
     private static final String DECIMAL_FORMAT = "#.##";
     private static final String DATE_FORMAT = "dd/MM/YYYY HH:mm:ss";
     private final int maxStations;
-    private final String rentalsMapName;
     private IMap<Integer, Station> stationsMap; // Pueden ser campos o deberían ser locales??
     private IMap<Integer, BikeRental> rentalsMap;
+    private final String name;
     private final DecimalFormat decimalFormat;
     private final DateTimeFormatter dateFormatter;
 
-    public Query2Solver(int n, String rentalsMapName){
-            this.maxStations = n;
-            this.rentalsMapName = rentalsMapName;
-            this.decimalFormat = new DecimalFormat(DECIMAL_FORMAT);
-            decimalFormat.setRoundingMode(RoundingMode.CEILING);
-            this.dateFormatter = DateTimeFormatter.ofPattern(DATE_FORMAT);
+    public Query2Solver(String name, int n){
+        this.name = name;
+        this.maxStations = n;
+        this.decimalFormat = new DecimalFormat(DECIMAL_FORMAT);
+        decimalFormat.setRoundingMode(RoundingMode.CEILING);
+        this.dateFormatter = DateTimeFormatter.ofPattern(DATE_FORMAT);
     }
     @Override
     @SuppressWarnings("deprecation")
-    public FnResult solveQuery(HazelcastInstance hazelcastInstance, KeyValueSource<Integer, BikeRental> rentalsSource, String stationsMapName, String filePath) {
-        FnResult result = FnResult.OK;
+    public void solveQuery(HazelcastInstance hazelcastInstance,
+                           Function<HazelcastInstance, IMap<Integer,BikeRental>> getRentalsMap,
+                           Function<HazelcastInstance, IMap<Integer, Station>> getStationsMap,
+                           String filePath) {
         if(maxStations < 0){
-            logger.error("Invalid value for n: " + maxStations);
-            logger.info("Invalid value for n: " + maxStations);
-            return FnResult.ERROR;
+            throw new IllegalArgumentException("Invalid value for n: " + maxStations);
         }
 
-        var jobFuture = hazelcastInstance.getJobTracker(getName())
-                .newJob(rentalsSource)
-                .mapper(new FastestTripMapper(stationsMapName))
+        stationsMap = getStationsMap.apply(hazelcastInstance);
+        rentalsMap = getRentalsMap.apply(hazelcastInstance);
+
+        ICompletableFuture<List<Map.Entry<String,Pair<Double,BikeRental>>>> jobFuture = hazelcastInstance.getJobTracker(name)
+                .newJob(KeyValueSource.fromMap(rentalsMap))
+                .mapper(new FastestTripMapper(stationsMap.getName()))
+                .combiner(new FastestTripCombinerFactory())
                 .reducer(new FastestTripReducerFactory())
-                .submit();
+                .submit(new Query2Collator(hazelcastInstance, stationsMap.getName(), rentalsMap.getName(), maxStations));
 
         try {
-            //////////////// Functions and variables ////////////////
-            stationsMap = hazelcastInstance.getMap(stationsMapName);
-            rentalsMap = hazelcastInstance.getMap(rentalsMapName);
-            final Function<Integer, String> stationsNameMapper = id -> stationsMap.get(id).name();
-
-            final Predicate<Map.Entry<Integer, Pair<Double, Integer>>> stationIsPresent =
-                    tripRecord -> {
-                        int statStationId = tripRecord.getKey();
-                        int rentalId = tripRecord.getValue().right();
-                        int endStationId = rentalsMap.get(rentalId).endStationId();
-                        return stationsMap.containsKey(statStationId) && stationsMap.containsKey(endStationId);
-                    };
-            // Searches in stations map and replaces stationId for its name
-            final Function<Map.Entry<Integer, Pair<Double,Integer>>, Map.Entry<String, Pair<Double,Integer>>>
-                    getStationName = tripRecord -> Map.entry(stationsNameMapper.apply(tripRecord.getKey()), tripRecord.getValue());
-            // Searches in rentals map and replaces tripId for its BikeRental
-            final Function<Map.Entry<String, Pair<Double,Integer>> ,Map.Entry<String, Pair<Double,BikeRental>>>
-                    getRental = tripRecord -> Map.entry(tripRecord.getKey(), new Pair<>(tripRecord.getValue().left(), rentalsMap.get(tripRecord.getValue().right())));
-            final ToDoubleFunction<Map.Entry<String, Pair<Double,Integer>>> tripSpeed =
-                    tripRecord -> tripRecord.getValue().left();
-            final Function<Map.Entry<String, Pair<Double,Integer>>, String> alphabetical =
-                    Map.Entry::getKey;
-            ////////////////////////////////////////////////
-
             // Wait for computation
-            var computedValues = jobFuture.get().entrySet();
+            List<Map.Entry<String,Pair<Double,BikeRental>>> computedValues = jobFuture.get();
 
-            // Sort values, fill missing data and limit values to the given amount
-            var processedValues = computedValues.stream().parallel()
-                    .filter(stationIsPresent)
-                    .map(getStationName)
-                    .sorted(Comparator.comparingDouble(tripSpeed).reversed().thenComparing(alphabetical))
-                    .limit(maxStations)
-                    .map(getRental)
-                    .toList();
+            writeValues(filePath, computedValues);
 
-            writeValues(filePath, processedValues);
-
-            //FIXME: repeated exception handling
         } catch (InterruptedException e) {
-            logger.error("MapReduce computation was interrupted: ", e);
-            result = FnResult.ERROR;
+            throw new MapReduceExecutionException("Job was interrupted (" + e.getCause() + ")");
         } catch (ExecutionException e) {
-            logger.error("MapReduce computation failed: ", e);
-            result = FnResult.ERROR;
-        } catch (IOException e) {
-            logger.error("Error while writing to file: ", e);
-            result = FnResult.ERROR;
-        } catch (Exception e){
-            logger.error("Unexpected exception: ", e);
-            result = FnResult.ERROR;
+            throw new MapReduceExecutionException("MapReduce computation was aborted (" + e.getCause() + ")");
         }
-        return result;
     }
 
     @Override
     public String getName() {
-        return "query2";
+        return name;
     }
 
-    public void writeValues(String filePath, List<Map.Entry<String, Pair<Double, BikeRental>>> values) throws IOException{
+
+    private void writeValues(String filePath, List<Map.Entry<String, Pair<Double, BikeRental>>> values){
         final String header = "start_station;end_station;start_date;end_date;distance;speed\n";
-        final String path = String.join("/", filePath, getName() + ".csv");
+        final String path = String.join("/", filePath, name + ".csv");
 
         try(BufferedWriter writer = new BufferedWriter(new FileWriter(path))){
             writer.append(header);
@@ -145,6 +109,8 @@ public class Query2Solver implements QuerySolver{
                         .append(parseDoubleValue(tripSpeed))
                         .append('\n');
             }
+        } catch (IOException e){
+            throw new FileWriteException(path);
         }
     }
 
