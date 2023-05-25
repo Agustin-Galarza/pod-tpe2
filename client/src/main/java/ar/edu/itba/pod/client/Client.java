@@ -1,5 +1,8 @@
 package ar.edu.itba.pod.client;
 
+import ar.edu.itba.pod.client.querySolvers.Query1Solver;
+import ar.edu.itba.pod.client.querySolvers.Query2Solver;
+import ar.edu.itba.pod.client.querySolvers.QuerySolver;
 import ar.edu.itba.pod.client.utils.CSVReader;
 import ar.edu.itba.pod.model.BikeRental;
 import ar.edu.itba.pod.model.Coordinate;
@@ -25,13 +28,6 @@ import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class Client implements AutoCloseable{
-    private static final Logger logger = LoggerFactory.getLogger(Client.class);
-    private static final Logger performanceLogger = LoggerFactory.getLogger("performance");
-
-    private HazelcastInstance hazelcastInstance;
-    private final QuerySolver solver;
-    private String inPath;
-    private String outPath;
 
     private static final String GROUP_NAME_ENV = "GROUP_NAME";
     private static final String GROUP_NAME_DEFAULT = "name";
@@ -47,8 +43,21 @@ public class Client implements AutoCloseable{
     private static final String STATIONS_CSV_FILENAME = "stations.csv";
     private static final String RENTALS_CSV_FILENAME = "bikes.csv";
 
-    private static final Map<String, Class<? extends QuerySolver>> solvers = new HashMap<>(){{
-       put("query1", Query1Solver.class);
+    private static final Logger logger = LoggerFactory.getLogger(Client.class);
+
+    private HazelcastInstance hazelcastInstance;
+    private final QuerySolver solver;
+    private String inPath;
+    private String outPath;
+    private PerformanceLogger performanceLogger;
+
+    private static final Map<String, QuerySolver> solvers = new HashMap<>(){{
+        List<QuerySolver> solvers = List.of(
+                new Query1Solver(),
+                new Query2Solver(SystemUtils.getProperty("n",Integer.class).orElse(-1), RENTALS_MAP_NAME)
+        );
+
+        solvers.forEach(solver -> put(solver.getName(), solver));
     }};
 
     public Client(@NotNull QuerySolver solver){
@@ -61,12 +70,15 @@ public class Client implements AutoCloseable{
         this.inPath = inPath;
         this.outPath = outPath;
 
-        performanceLogger.info("Inicio de la lectura de los archivos.");
+        performanceLogger = PerformanceLogger.logTo(outPath, solver.getName().replace("query", "text"));
+
+        performanceLogger.logReadStart();
         if(!uploadRentals().and(readStations()).isOk()){
             logger.info("Error: could not read input csv. Aborting");
             System.exit(1);
         }
-        performanceLogger.info("Fin de la lectura de los archivos.");
+        performanceLogger.logReadEnd();
+        logger.debug("Currently there are " + getRentalsMap().size() + " rentals and " + getStationsMap().size() + " stations.");
     }
     public ClientConfig configClient(String[] nodeAddresses){
         Dotenv dotenv = Dotenv.load();
@@ -89,6 +101,7 @@ public class Client implements AutoCloseable{
     public void shutdown(){
         logger.info("Shutting down client ...");
         // Destroy maps before closing to clear up the memory
+        //TODO: checkear si funciona
         hazelcastInstance.getMap(RENTALS_MAP_NAME).destroy();
         hazelcastInstance.getMap(STATIONS_MAP_NAME).destroy();
 
@@ -106,7 +119,7 @@ public class Client implements AutoCloseable{
          * ○ is_member: Si el usuario del alquiler es miembro del sistema de alquiler (0 si no es
          * miembro, 1 si lo es)
          */
-        ConcurrentMap<String, BikeRental> rentalsMap = getRentalsMap();
+        var rentalsMap = getRentalsMap();
         final String DATE_TIME_PATTERN = "yyyy-MM-dd HH:mm:ss";
         final String path = String.join("/", inPath, RENTALS_CSV_FILENAME);
 
@@ -120,7 +133,8 @@ public class Client implements AutoCloseable{
                         new CSVReader.CSVColumn<>("is_member", value -> value.equals("1"))
                 )
         );
-        AtomicInteger counter = new AtomicInteger();
+        // TODO: design decision -> cada rental tiene un id para recuperarlo luego y minimizar la cantidad de datos que envío por la red
+        AtomicInteger rentalId = new AtomicInteger(0);
         try {
             reader.processItems(
                     values -> {
@@ -131,7 +145,7 @@ public class Client implements AutoCloseable{
                                 (LocalDateTime) values.get("end_date"),
                                 (boolean) values.get("is_member")
                         );
-                        rentalsMap.put(Integer.toString(counter.getAndIncrement()), rental);
+                        rentalsMap.put(rentalId.getAndIncrement(), rental);
                     }
             );
         } catch (IOException e) {
@@ -149,7 +163,7 @@ public class Client implements AutoCloseable{
          * ○ latitude: Latitud de la ubicación de la estación (número real)
          * ○ longitude: Longitud de la ubicación de la estación (número real)
          */
-        ConcurrentMap<String, Station> stationsMap = getStationsMap();
+        ConcurrentMap<Integer, Station> stationsMap = getStationsMap();
         final String path = String.join("/", inPath, STATIONS_CSV_FILENAME);
 
         CSVReader<Station> reader = new CSVReader<>(
@@ -169,7 +183,7 @@ public class Client implements AutoCloseable{
                                 (String) values.get("name"),
                                 new Coordinate((double) values.get("latitude"), (double) values.get("longitude"))
                         );
-                        stationsMap.put(station.name(), station);
+                        stationsMap.put(station.id(), station);
                     }
             );
         } catch (IOException e) {
@@ -182,16 +196,19 @@ public class Client implements AutoCloseable{
 
     @SuppressWarnings({"deprecated", "deprecation"})
     public void solveQuery(){
-//        solver.solveQuery(hazelcastInstance.getJobTracker("query-tracker"), KeyValueSource.fromMap(hazelcastInstance.getMap(RENTALS_MAP_NAME)), STATIONS_MAP_NAME);
-        logger.info(Integer.toString(getRentalsMap().size()));
-        logger.info(Integer.toString(getStationsMap().size()));
+        performanceLogger.logMapReduceStart();
+        var result = solver.solveQuery(hazelcastInstance, KeyValueSource.fromMap(hazelcastInstance.getMap(RENTALS_MAP_NAME)), STATIONS_MAP_NAME, outPath);
+        performanceLogger.logMapReduceEnd();
+        if(!result.isOk()){
+            logger.info("There was an error with the MapReduce process.");
+        }
     }
 
-    public ConcurrentMap<String, Station> getStationsMap(){
+    public ConcurrentMap<Integer, Station> getStationsMap(){
         return hazelcastInstance.getMap(STATIONS_MAP_NAME);
     }
 
-    public ConcurrentMap<String, BikeRental> getRentalsMap(){
+    public ConcurrentMap<Integer, BikeRental> getRentalsMap(){
         return hazelcastInstance.getMap(RENTALS_MAP_NAME);
     }
 
@@ -210,19 +227,12 @@ public class Client implements AutoCloseable{
             exitWithError("Error: missing query param.", "No query solver name given", new IllegalArgumentException());
         }
         String query = args[0];
-
-
-        QuerySolver querySolver = null;
-        try {
-            querySolver = solvers.get(query).getDeclaredConstructor().newInstance();
-        }catch (NullPointerException | NoSuchMethodException e){
-            exitWithError("Error: no solver for " + query, "Class not found for entry " + query, e);
-        } catch (Exception e){
-            exitWithError("Unexpected error, aborting.", "Unexpected exception:", e);
+        if(!solvers.containsKey(query)){
+            logger.info("No solver for " + query);
+            return;
         }
-        assert querySolver != null;
 
-        try (Client client = new Client(querySolver)) {
+        try (Client client = new Client(solvers.get(query))) {
             client.startClient(addressesList, inPath, outPath);
 
             client.solveQuery();
