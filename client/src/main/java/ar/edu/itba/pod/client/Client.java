@@ -96,7 +96,9 @@ public class Client implements AutoCloseable{
 
         } catch (FileOpeningException e){
             exitWithError("Error: could not open file.", e.getMessage(), e);
-        } catch (Exception e){
+        } catch (MissingSystemPropertyException e){
+            exitWithError("Error: missing property: " + e.getMessage(), e.toString(), e);
+        }catch (Exception e){
             exitWithError("Unexpected error, aborting.", "Unexpected exception:", e);
         }
     }
