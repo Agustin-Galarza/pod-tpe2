@@ -18,7 +18,7 @@ import static java.time.temporal.ChronoUnit.*;
 
 public class FastestTripMapper implements Mapper<Integer, BikeRental, Integer, Pair<Double,Integer>>, HazelcastInstanceAware {
 
-    private HazelcastInstance hazelcastInstance;
+    private transient HazelcastInstance hazelcastInstance;
     private final String stationsMapName;
 
     public FastestTripMapper(String stationsMapName){
