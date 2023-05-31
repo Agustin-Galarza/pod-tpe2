@@ -26,6 +26,12 @@ while getopts "ha:r:l:" o; do
         a)
             addresses=${OPTARG} || usage
             ;;
+        r)
+          runs=${OPTARG} || usage
+            ;;
+        l)
+          query2_output_lines=${OPTARG} || usage
+            ;;
         *)
             usage
             ;;
