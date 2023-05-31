@@ -3,6 +3,9 @@ target/
 !**/src/main/**/target/
 !**/src/test/**/target/
 *.csv
+output/tmp/*
+output/analytics
+output/experimental_results
 
 ### IntelliJ IDEA ###
 .idea/modules.xml
