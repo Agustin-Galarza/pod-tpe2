@@ -4,8 +4,10 @@ import ar.edu.itba.pod.client.exceptions.FileOpeningException;
 
 import java.io.FileWriter;
 import java.io.IOException;
+import java.nio.charset.Charset;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
@@ -21,8 +23,8 @@ public class PerformanceLogger {
         // [date] [name] [thread]: [message]
         return String.format("%s %s [%s]: %s\n", dateString, LOGGER_NAME, thread, message);
     }
-    public static PerformanceLogger logTo(String targetDir, String filename){
-        return new PerformanceLogger(Path.of(String.join("/", targetDir, filename)), true);
+    public static PerformanceLogger logTo(String targetDir, String filename, boolean writeToConsole){
+        return new PerformanceLogger(Path.of(String.join("/", targetDir, filename)), writeToConsole);
     }
 
     private enum Messages{
@@ -58,8 +60,8 @@ public class PerformanceLogger {
 
     private void log(Messages message){
         var line = buildLine(message.msg);
-        try (var writer = new FileWriter(this.path.toFile(), true)){
-            writer.append(line);
+        try {
+            Files.write(path, line.getBytes(), StandardOpenOption.APPEND);
         } catch (IOException e){
             throw new FileOpeningException(path.toString());
         }

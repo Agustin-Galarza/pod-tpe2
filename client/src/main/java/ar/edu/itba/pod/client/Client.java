@@ -37,6 +37,7 @@ public class Client implements AutoCloseable{
     private static final String ADDRESSES_PROPERTY_NAME = "addresses";
     private static final String INPATH_PROPERTY_NAME = "inPath";
     private static final String OUTPATH_PROPERTY_NAME = "outPath";
+    private static final String LOGTOCONSOLE_PROPERTY_NAME = "logPerformance";
 
     private static final String STATIONS_MAP_NAME = "stations";
     private static final String RENTALS_MAP_NAME = "rentals";
@@ -73,11 +74,13 @@ public class Client implements AutoCloseable{
     }
 
     public static void main(String[] args) {
-        //TODO: test
         String addressesRawList = SystemUtils.getProperty(ADDRESSES_PROPERTY_NAME, String.class).orElseThrow(() -> new IllegalArgumentException("No addresses chosen for connection to cluster"));
         String[] addressesList = addressesRawList.split(",");
         String inPath = SystemUtils.getProperty(INPATH_PROPERTY_NAME, String.class).orElseGet(() -> ".");
         String outPath = SystemUtils.getProperty(OUTPATH_PROPERTY_NAME, String.class).orElseGet(() -> ".");
+        // No es tan importante que se especifique este parámetro, solo afecta a los logs de tiempos de ejecución en la consola.
+        boolean logToConsole = SystemUtils.getProperty(LOGTOCONSOLE_PROPERTY_NAME, Boolean.class).orElse(true);
+
         if(args.length != 1){
             exitWithError("Error: missing query param.", "No query solver name given", new IllegalArgumentException());
         }
@@ -90,7 +93,7 @@ public class Client implements AutoCloseable{
         }
 
         try (Client client = new Client(query.get().getSolver())) {
-            client.startClient(addressesList, inPath, outPath);
+            client.startClient(addressesList, inPath, outPath, logToConsole);
 
             client.solveQuery();
 
@@ -113,13 +116,17 @@ public class Client implements AutoCloseable{
         this.solver = solver;
     }
 
-    public void startClient(@NotNull String[] nodeAddresses,@NotNull String inPath,@NotNull String outPath) {
+    public void startClient(@NotNull String[] nodeAddresses, @NotNull String inPath, @NotNull String outPath,
+            boolean writeToConsole) {
         logger.info("Starting client ...");
         hazelcastInstance = HazelcastClient.newHazelcastClient(configClient(nodeAddresses));
         this.inPath = inPath;
         this.outPath = outPath;
 
-        performanceLogger = PerformanceLogger.logTo(outPath, solver.getName().replace("query", "text") + ".txt");
+        performanceLogger = PerformanceLogger.logTo(
+                outPath,
+                solver.getName().replace("query", "text") + ".txt",
+                writeToConsole);
 
         performanceLogger.logReadStart();
         uploadRentals();
@@ -180,7 +187,6 @@ public class Client implements AutoCloseable{
                         new CSVReader.CSVColumn<>("is_member", value -> value.equals("1"))
                 )
         );
-        // TODO: design decision -> cada rental tiene un id para recuperarlo luego y minimizar la cantidad de datos que envío por la red
         AtomicInteger rentalId = new AtomicInteger(0);
         reader.processItems(
                 values -> {
@@ -226,7 +232,6 @@ public class Client implements AutoCloseable{
                     stationsMap.put(station.id(), station);
                 }
         );
-
     }
 
     public void solveQuery(){
