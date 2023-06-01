@@ -8,6 +8,7 @@ import io.github.cdimascio.dotenv.Dotenv;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.util.Collections;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 
@@ -16,12 +17,14 @@ public class Server {
     private HazelcastInstance hazelcastInstance;
     private final CountDownLatch countDownLatch = new CountDownLatch(1);
     private static final int MAX_MINUTES = 30;
+    private static final String DEFAULT_INTERFACE = "127.0.0.*";
     private static final String GROUP_NAME_ENV = "GROUP_NAME";
     private static final String GROUP_NAME_DEFAULT = "name";
     private static final String GROUP_PASSWORD_ENV = "GROUP_PASSWORD";
     private static final String GROUP_PASSWORD_DEFAULT = "password";
     private static final String MANCENTERURL_PROPERTY_NAME = "mancenter";
     private static final String TIMEOUT_PROPERTY_NAME = "timeout";
+    private static final String INTERFACE_PROPERTY_NAME = "interface";
 
     private Config configServer(){
         Dotenv dotenv = Dotenv.load();
@@ -36,6 +39,10 @@ public class Server {
 
         // Network Config
         NetworkConfig networkConfig = new NetworkConfig();
+        String serverInterface = SystemUtils.getProperty(INTERFACE_PROPERTY_NAME, String.class).orElse(DEFAULT_INTERFACE);
+        InterfacesConfig interfacesConfig = new InterfacesConfig()
+                .setInterfaces(Collections.singletonList(serverInterface)).setEnabled(true);
+        networkConfig.setInterfaces(interfacesConfig);
         JoinConfig joinConfig = new JoinConfig();
         MulticastConfig multicastConfig = new MulticastConfig();
         joinConfig.setMulticastConfig(multicastConfig);
