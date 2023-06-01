@@ -15,6 +15,7 @@ import com.hazelcast.client.config.ClientConfig;
 import com.hazelcast.client.config.ClientNetworkConfig;
 import com.hazelcast.config.GroupConfig;
 import com.hazelcast.core.HazelcastInstance;
+import com.hazelcast.core.IMap;
 import io.github.cdimascio.dotenv.Dotenv;
 import org.jetbrains.annotations.NotNull;
 import org.slf4j.Logger;
@@ -197,7 +198,7 @@ public class Client implements AutoCloseable{
                             (LocalDateTime) values.get("end_date"),
                             (boolean) values.get("is_member")
                     );
-                    rentalsMap.put(rentalId.getAndIncrement(), rental);
+                    rentalsMap.set(rentalId.getAndIncrement(), rental);
                 }
         );
 
@@ -210,7 +211,7 @@ public class Client implements AutoCloseable{
          * ○ latitude: Latitud de la ubicación de la estación (número real)
          * ○ longitude: Longitud de la ubicación de la estación (número real)
          */
-        ConcurrentMap<Integer, Station> stationsMap = getStationsMap();
+        IMap<Integer, Station> stationsMap = getStationsMap();
         final String path = String.join("/", inPath, STATIONS_CSV_FILENAME);
 
         CSVReader<Station> reader = new CSVReader<>(
@@ -229,7 +230,7 @@ public class Client implements AutoCloseable{
                             (String) values.get("name"),
                             new Coordinate((double) values.get("latitude"), (double) values.get("longitude"))
                     );
-                    stationsMap.put(station.id(), station);
+                    stationsMap.set(station.id(), station);
                 }
         );
     }
@@ -246,11 +247,11 @@ public class Client implements AutoCloseable{
 
     }
 
-    public ConcurrentMap<Integer, Station> getStationsMap(){
+    public IMap<Integer, Station> getStationsMap(){
         return hazelcastInstance.getMap(STATIONS_MAP_NAME);
     }
 
-    public ConcurrentMap<Integer, BikeRental> getRentalsMap(){
+    public IMap<Integer, BikeRental> getRentalsMap(){
         return hazelcastInstance.getMap(RENTALS_MAP_NAME);
     }
 
