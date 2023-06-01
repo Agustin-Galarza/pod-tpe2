@@ -1,6 +1,7 @@
 package ar.edu.itba.pod.client.querySolvers;
 
 import ar.edu.itba.pod.aggregation.collators.Query1Collator;
+import ar.edu.itba.pod.aggregation.combiners.MemberTripCounterCombinerFactory;
 import ar.edu.itba.pod.aggregation.mappers.MemberTripCounterMapper;
 import ar.edu.itba.pod.aggregation.reducers.MemberTripCounterReducerFactory;
 import ar.edu.itba.pod.client.exceptions.FileWriteException;
@@ -43,6 +44,7 @@ public class Query1Solver implements QuerySolver {
         JobCompletableFuture<List<Map.Entry<String,Integer>>> jobFuture = hazelcastInstance.getJobTracker(name)
                 .newJob(KeyValueSource.fromMap(rentalsMap))
                 .mapper(new MemberTripCounterMapper())
+                .combiner(new MemberTripCounterCombinerFactory())
                 .reducer(new MemberTripCounterReducerFactory())
                 .submit(new Query1Collator(hazelcastInstance, stationsMap.getName()));
 
