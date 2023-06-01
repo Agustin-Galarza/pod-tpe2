@@ -36,7 +36,7 @@ public class Query1Solver implements QuerySolver {
             Function<HazelcastInstance, IMap<Integer, Station>> getStationsMap,
             String filePath
     ){
-        //TODO: change this thing to an abstract class
+        //TODO: change this to an abstract class
         var stationsMap = getStationsMap.apply(hazelcastInstance);
         var rentalsMap = getRentalsMap.apply(hazelcastInstance);
 
