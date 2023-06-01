@@ -15,20 +15,14 @@ import java.util.stream.StreamSupport;
 @SuppressWarnings("deprecation")
 public class Query2Collator implements
         Collator<Map.Entry<Integer, Pair<Double, Integer>>, List<Map.Entry<String, Pair<Double, BikeRental>>>> {
-    private final String stationsMapName;
-    private final String rentalsMapName;
     private final int maxStations;
-    private final HazelcastInstance hazelcastInstance;
     private final IMap<Integer, Station> stationsMap;
     private final IMap<Integer, BikeRental> rentalsMap;
 
     public Query2Collator(HazelcastInstance hazelcastInstance, String stationsMapName, String rentalsMapName, int maxStations) {
-        this.stationsMapName = stationsMapName;
-        this.rentalsMapName = rentalsMapName;
         this.maxStations = maxStations;
         // Since the Collator is executed on the job emitting member (the client in this case) its of no use to
         // implement HazelcastInstanceAware and the instance needs to be passed here.
-        this.hazelcastInstance = hazelcastInstance;
         this.stationsMap = hazelcastInstance.getMap(stationsMapName);
         this.rentalsMap = hazelcastInstance.getMap(rentalsMapName);
     }
