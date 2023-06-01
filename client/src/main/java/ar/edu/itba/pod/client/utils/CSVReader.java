@@ -17,6 +17,7 @@ public class CSVReader<T> {
     private final List<CSVColumn<?>> columns = new ArrayList<>();
     @SuppressWarnings("FieldCanBeLocal")
     private final String VALUE_SEP = ";";
+    private final Map<String, Object> extractedValues = new HashMap<>();
 
     public CSVReader(
             String path,
@@ -24,6 +25,7 @@ public class CSVReader<T> {
     ) throws InvalidPathException {
         this.path = Paths.get(path);
         this.columns.addAll(columns);
+        this.columns.forEach(column -> extractedValues.put(column.name, null));
     }
 
     /**
@@ -57,7 +59,6 @@ public class CSVReader<T> {
     }
 
     private Map<String, Object> extractValues(String line) {
-        Map<String, Object> extractedValues = new HashMap<>();
         String[] rowValues = line.split(VALUE_SEP);
         for (int i = 0; i < columns.size(); i++) {
             CSVColumn<?> column = columns.get(i);
@@ -81,13 +82,9 @@ public class CSVReader<T> {
         }
 
         public V parse(String value) {
-            return parser.apply(sanitize(value));
+            return parser.apply(value);
         }
 
-        private String sanitize(String str) {
-            //TODO
-            return str;
-        }
 
         public String getName() {
             return name;
