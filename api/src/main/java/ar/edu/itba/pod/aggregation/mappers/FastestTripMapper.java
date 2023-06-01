@@ -7,6 +7,7 @@ import ar.edu.itba.pod.utils.Computations;
 import ar.edu.itba.pod.utils.Pair;
 import com.hazelcast.core.HazelcastInstance;
 import com.hazelcast.core.HazelcastInstanceAware;
+import com.hazelcast.core.IMap;
 import com.hazelcast.mapreduce.Context;
 import com.hazelcast.mapreduce.Mapper;
 
@@ -18,7 +19,7 @@ import static java.time.temporal.ChronoUnit.*;
 
 public class FastestTripMapper implements Mapper<Integer, BikeRental, Integer, Pair<Double,Integer>>, HazelcastInstanceAware {
 
-    private transient HazelcastInstance hazelcastInstance;
+    private IMap<Integer,Station> stationsMap;
     private final String stationsMapName;
 
     public FastestTripMapper(String stationsMapName){
@@ -34,15 +35,15 @@ public class FastestTripMapper implements Mapper<Integer, BikeRental, Integer, P
     }
 
     private Coordinate getStationLocation(int id){
-        return ((Station)hazelcastInstance.getMap(stationsMapName).get(id)).coordinate();
+        return stationsMap.get(id).coordinate();
     }
 
     @Override
     public void map(Integer tripId, BikeRental bikeRental, Context<Integer, Pair<Double, Integer>> context) {
         if(
                 bikeRental.startStationId() == bikeRental.endStationId() ||
-                !hazelcastInstance.getMap(stationsMapName).containsKey(bikeRental.startStationId()) ||
-                !hazelcastInstance.getMap(stationsMapName).containsKey(bikeRental.endStationId())
+                !stationsMap.containsKey(bikeRental.startStationId()) ||
+                !stationsMap.containsKey(bikeRental.endStationId())
         ){
             return;
         }
@@ -57,7 +58,7 @@ public class FastestTripMapper implements Mapper<Integer, BikeRental, Integer, P
 
     @Override
     public void setHazelcastInstance(HazelcastInstance hazelcastInstance) {
-        this.hazelcastInstance = hazelcastInstance;
+        this.stationsMap = hazelcastInstance.getMap(stationsMapName);
     }
 
 }
