@@ -5,9 +5,9 @@ import ar.edu.itba.pod.client.exceptions.MissingSystemPropertyException;
 import ar.edu.itba.pod.client.querySolvers.Query1Solver;
 import ar.edu.itba.pod.client.querySolvers.Query2Solver;
 import ar.edu.itba.pod.client.querySolvers.QuerySolver;
-import ar.edu.itba.pod.client.utils.CSVReader;
+import ar.edu.itba.pod.client.utils.RentalsCSVUploader;
+import ar.edu.itba.pod.client.utils.StationsCSVUploader;
 import ar.edu.itba.pod.model.BikeRental;
-import ar.edu.itba.pod.model.Coordinate;
 import ar.edu.itba.pod.model.Station;
 import ar.edu.itba.pod.utils.SystemUtils;
 import com.hazelcast.client.HazelcastClient;
@@ -21,11 +21,7 @@ import org.jetbrains.annotations.NotNull;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.time.LocalDateTime;
-import java.time.format.DateTimeFormatter;
 import java.util.*;
-import java.util.concurrent.ConcurrentMap;
-import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Supplier;
 
 public class Client implements AutoCloseable{
@@ -77,8 +73,8 @@ public class Client implements AutoCloseable{
     public static void main(String[] args) {
         String addressesRawList = SystemUtils.getProperty(ADDRESSES_PROPERTY_NAME, String.class).orElseThrow(() -> new IllegalArgumentException("No addresses chosen for connection to cluster"));
         String[] addressesList = addressesRawList.split(",");
-        String inPath = SystemUtils.getProperty(INPATH_PROPERTY_NAME, String.class).orElseGet(() -> ".");
-        String outPath = SystemUtils.getProperty(OUTPATH_PROPERTY_NAME, String.class).orElseGet(() -> ".");
+        String inPath = SystemUtils.getProperty(INPATH_PROPERTY_NAME, String.class).orElse(".");
+        String outPath = SystemUtils.getProperty(OUTPATH_PROPERTY_NAME, String.class).orElse(".");
         // No es tan importante que se especifique este parámetro, solo afecta a los logs de tiempos de ejecución en la consola.
         boolean logToConsole = SystemUtils.getProperty(LOGTOCONSOLE_PROPERTY_NAME, Boolean.class).orElse(true);
 
@@ -157,82 +153,20 @@ public class Client implements AutoCloseable{
     public void shutdown(){
         logger.info("Shutting down client ...");
         // Destroy maps before closing to clear up the memory
-        hazelcastInstance.getMap(RENTALS_MAP_NAME).destroy();
-        hazelcastInstance.getMap(STATIONS_MAP_NAME).destroy();
+        hazelcastInstance.getMap(RENTALS_MAP_NAME).clear();
+        hazelcastInstance.getMap(STATIONS_MAP_NAME).clear();
 
         hazelcastInstance.shutdown();
     }
 
     private void uploadRentals() {
-        /*
-         * ○ start_date: Fecha y hora del alquiler de la bicicleta (inicio del viaje) en formato
-         * yyyy-MM-dd HH:mm:ss
-         * ○ emplacement_pk_start: Identificador de la estación de inicio (número entero)
-         * ○ end_date: Fecha y hora de la devolución de la bicicleta (fin del viaje) en formato
-         * yyyy-MM-dd HH:mm:ss
-         * ○ emplacement_pk_end: Identificador de la estación de fin (número entero)
-         * ○ is_member: Si el usuario del alquiler es miembro del sistema de alquiler (0 si no es
-         * miembro, 1 si lo es)
-         */
-        var rentalsMap = getRentalsMap();
-        final String DATE_TIME_PATTERN = "yyyy-MM-dd HH:mm:ss";
         final String path = String.join("/", inPath, RENTALS_CSV_FILENAME);
-
-        var reader = new CSVReader<BikeRental>(
-                path,
-                Arrays.asList(
-                        new CSVReader.CSVColumn<>("start_date", rawDate -> LocalDateTime.parse(rawDate, DateTimeFormatter.ofPattern(DATE_TIME_PATTERN))),
-                        new CSVReader.CSVColumn<>("emplacement_pk_start", Integer::parseInt),
-                        new CSVReader.CSVColumn<>("end_date", rawDate -> LocalDateTime.parse(rawDate, DateTimeFormatter.ofPattern(DATE_TIME_PATTERN))),
-                        new CSVReader.CSVColumn<>("emplacement_pk_end", Integer::parseInt),
-                        new CSVReader.CSVColumn<>("is_member", value -> value.equals("1"))
-                )
-        );
-        AtomicInteger rentalId = new AtomicInteger(0);
-        reader.processItems(
-                values -> {
-                    var rental = new BikeRental(
-                            (int) values.get("emplacement_pk_start"),
-                            (LocalDateTime) values.get("start_date"),
-                            (int) values.get("emplacement_pk_end"),
-                            (LocalDateTime) values.get("end_date"),
-                            (boolean) values.get("is_member")
-                    );
-                    rentalsMap.set(rentalId.getAndIncrement(), rental);
-                }
-        );
-
+        new RentalsCSVUploader(path, this::getRentalsMap).uploadItems();
     }
 
     private void uploadStations() {
-        /*
-         * ○ pk: Identificador de la estación (número entero)
-         * ○ name: Nombre de la estación (cadena de caracteres)
-         * ○ latitude: Latitud de la ubicación de la estación (número real)
-         * ○ longitude: Longitud de la ubicación de la estación (número real)
-         */
-        IMap<Integer, Station> stationsMap = getStationsMap();
         final String path = String.join("/", inPath, STATIONS_CSV_FILENAME);
-
-        CSVReader<Station> reader = new CSVReader<>(
-                path,
-                Arrays.asList(
-                        new CSVReader.CSVColumn<>("pk", Integer::parseInt),
-                        new CSVReader.CSVColumn<>("name", s -> s),
-                        new CSVReader.CSVColumn<>("latitude", Double::parseDouble),
-                        new CSVReader.CSVColumn<>("longitude", Double::parseDouble)
-                )
-        );
-        reader.processItems(
-                values -> {
-                    var station = new Station(
-                            (int) values.get("pk"),
-                            (String) values.get("name"),
-                            new Coordinate((double) values.get("latitude"), (double) values.get("longitude"))
-                    );
-                    stationsMap.set(station.id(), station);
-                }
-        );
+        new StationsCSVUploader(path, this::getStationsMap).uploadItems();
     }
 
     public void solveQuery(){

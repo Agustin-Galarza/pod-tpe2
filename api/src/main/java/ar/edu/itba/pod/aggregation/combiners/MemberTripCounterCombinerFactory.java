@@ -24,6 +24,6 @@ public class MemberTripCounterCombinerFactory implements CombinerFactory<Integer
     }
     @Override
     public Combiner<Integer, Integer> newCombiner(Integer integer) {
-        return null;
+        return new MemberTripCounterCombiner();
     }
 }
