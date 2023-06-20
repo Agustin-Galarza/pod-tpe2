@@ -28,7 +28,7 @@ public abstract class CSVUploader<K,V> {
 
     public void uploadItems(){
         try(var lines = Files.lines(path)) {
-            lines.map(this::parseLine).forEach(this::consumeItem);
+            lines.skip(1).map(this::parseLine).forEach(this::consumeItem);
             clearCache();
         } catch (IOException e) {
             throw new FileOpeningException(path.toString());
