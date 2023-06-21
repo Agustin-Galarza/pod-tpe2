@@ -27,7 +27,7 @@ public class Query1Collator implements Collator<Map.Entry<Integer,Integer>, List
     }
 
     private String alphabetical(Map.Entry<String,Integer> entry){
-        return entry.getKey();
+        return entry.getKey().toLowerCase();
     }
 
     @Override

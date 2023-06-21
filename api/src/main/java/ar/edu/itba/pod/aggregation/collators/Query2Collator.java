@@ -48,7 +48,7 @@ public class Query2Collator implements
     }
 
     private String alphabetical(Map.Entry<String, Pair<Double, Integer>> entry) {
-        return entry.getKey();
+        return entry.getKey().toLowerCase();
     }
 
     // Searches in rentals map and replaces tripId for its BikeRental

@@ -155,8 +155,6 @@ public class Client implements AutoCloseable{
         // Destroy maps before closing to clear up the memory
         hazelcastInstance.getMap(RENTALS_MAP_NAME).clear();
         hazelcastInstance.getMap(STATIONS_MAP_NAME).clear();
-        logger.info("Distributed collections cleared. Now they have sizes of: " + getRentalsMap().size() + " and "
-                + getStationsMap().size()); // TODO: remove
 
         hazelcastInstance.shutdown();
     }
@@ -164,13 +162,11 @@ public class Client implements AutoCloseable{
     private void uploadRentals() {
         final String path = String.join("/", inPath, RENTALS_CSV_FILENAME);
         new RentalsCSVUploader(path, this::getRentalsMap).uploadItems();
-        logger.info("Bike Rentals uploaded, with a total of " + getRentalsMap().size() + " entries."); // TODO: remove
     }
 
     private void uploadStations() {
         final String path = String.join("/", inPath, STATIONS_CSV_FILENAME);
         new StationsCSVUploader(path, this::getStationsMap).uploadItems();
-        logger.info("Stations uploaded, with a total of " + getStationsMap().size() + " entries."); // TODO: remove
     }
 
     public void solveQuery(){
